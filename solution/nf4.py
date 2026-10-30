@@ -22,7 +22,7 @@ import triton
 import triton.language as tl
 
 from . import config
-from ._util import bump, log_once
+from ._util import bump, log_once, timed
 
 _BLOCK = 1024
 _CODE = {}
@@ -94,17 +94,18 @@ def dequantize_nf4(A, st):
     flat = A.reshape(-1)
     code = _code(st, A.device)
     grid = (triton.cdiv(n_out, _BLOCK),)
-    if st.nested:
-        s2 = st.state2
-        soup_nf4_dequant_kernel[grid](flat, st.absmax, code, s2.absmax, s2.code, st.offset, out,
-                                      n_out, BLOCKSIZE=int(st.blocksize),
-                                      BLOCKSIZE2=int(s2.blocksize), NESTED=True,
-                                      BLOCK=_BLOCK, num_warps=4)
-    else:
-        absmax = st.absmax if st.absmax.dtype == torch.float32 else st.absmax.float()
-        soup_nf4_dequant_kernel[grid](flat, absmax, code, code, code, code, out, n_out,
-                                      BLOCKSIZE=int(st.blocksize), BLOCKSIZE2=1, NESTED=False,
-                                      BLOCK=_BLOCK, num_warps=4)
+    with timed(("nf4", bool(st.nested), str(st.dtype))):
+        if st.nested:
+            s2 = st.state2
+            soup_nf4_dequant_kernel[grid](flat, st.absmax, code, s2.absmax, s2.code, st.offset,
+                                          out, n_out, BLOCKSIZE=int(st.blocksize),
+                                          BLOCKSIZE2=int(s2.blocksize), NESTED=True,
+                                          BLOCK=_BLOCK, num_warps=4)
+        else:
+            absmax = st.absmax if st.absmax.dtype == torch.float32 else st.absmax.float()
+            soup_nf4_dequant_kernel[grid](flat, absmax, code, code, code, code, out, n_out,
+                                          BLOCKSIZE=int(st.blocksize), BLOCKSIZE2=1,
+                                          NESTED=False, BLOCK=_BLOCK, num_warps=4)
     return out
 
 

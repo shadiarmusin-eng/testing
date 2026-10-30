@@ -36,6 +36,10 @@ def apply_extra():
         from .rmsnorm import patch_qwen2_rmsnorm
         return patch_qwen2_rmsnorm
 
+    def rot():
+        from .rotary import patch_qwen2_rotary
+        return patch_qwen2_rotary
+
     def mlp():
         from .mlp import patch_qwen2_mlp_fast
         return patch_qwen2_mlp_fast
@@ -53,6 +57,7 @@ def apply_extra():
         return patch_bnb_dequant
 
     run("rmsnorm", config.ENABLE_RMSNORM, rms)
+    run("rotary", config.ENABLE_ROTARY, rot)
     run("fast_mlp", config.ENABLE_MLP_FAST, mlp)
     run("ce_loss", config.ENABLE_CE, ce)
     run("entropy", config.ENABLE_ENTROPY, ent)

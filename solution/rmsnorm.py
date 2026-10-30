@@ -19,7 +19,7 @@ import triton
 import triton.language as tl
 
 from . import config
-from ._util import bump, is_fp16_autocast, log_once
+from ._util import bump, is_fp16_autocast, log_once, note_seq, timed
 
 
 @triton.jit
@@ -74,8 +74,9 @@ class RMSNormFn(torch.autograd.Function):
         y = torch.empty(x2.shape, dtype=out_dtype, device=x.device)
         r = torch.empty(x2.shape[0], dtype=torch.float32, device=x.device)
         block, warps = _cfg(N)
-        soup_rmsnorm_fwd_kernel[(x2.shape[0],)](x2, weight, y, r, x2.stride(0), y.stride(0), N,
-                                                eps, BLOCK=block, num_warps=warps)
+        with timed(("rms_fwd", str(x2.dtype), str(y.dtype))):
+            soup_rmsnorm_fwd_kernel[(x2.shape[0],)](x2, weight, y, r, x2.stride(0), y.stride(0),
+                                                    N, eps, BLOCK=block, num_warps=warps)
         ctx.save_for_backward(x2, weight, r)
         ctx.shape = shape
         return y.view(shape)
@@ -89,9 +90,10 @@ class RMSNormFn(torch.autograd.Function):
             dy2 = dy2.contiguous()
         dx = torch.empty_like(x2)
         block, warps = _cfg(N)
-        soup_rmsnorm_bwd_kernel[(x2.shape[0],)](dy2, x2, weight, r, dx, dy2.stride(0),
-                                                x2.stride(0), dx.stride(0), N,
-                                                BLOCK=block, num_warps=warps)
+        with timed(("rms_bwd", str(dy2.dtype), str(x2.dtype))):
+            soup_rmsnorm_bwd_kernel[(x2.shape[0],)](dy2, x2, weight, r, dx, dy2.stride(0),
+                                                    x2.stride(0), dx.stride(0), N,
+                                                    BLOCK=block, num_warps=warps)
         return dx.view(ctx.shape), None, None, None
 
 
@@ -135,6 +137,8 @@ def patch_qwen2_rmsnorm():
             out16 = bool(config.ENABLE_RMSNORM_FP16_OUT and getattr(self, _MARK, False)
                          and is_fp16_autocast())
             bump("rmsnorm_out16" if out16 else "rmsnorm")
+            if hidden_states.dim() == 3 and not getattr(self, _MARK, False):
+                note_seq(hidden_states.shape[1])      # финальная норма: один раз за forward
             log_once("rms_dtypes", f"INFO rmsnorm: x={hidden_states.dtype} w={w.dtype} "
                                    f"out16={out16}")
             return RMSNormFn.apply(hidden_states, w, float(eps), out16)

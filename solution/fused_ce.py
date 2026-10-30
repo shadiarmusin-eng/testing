@@ -16,7 +16,7 @@ import triton
 import triton.language as tl
 
 from . import config
-from ._util import bump, log_once
+from ._util import bump, log_once, timed
 
 _BLOCK = 4096
 
@@ -89,8 +89,9 @@ class _CERows(torch.autograd.Function):
         rows, V = logits.shape
         lse = torch.empty(rows, dtype=torch.float32, device=logits.device)
         loss = torch.empty(rows, dtype=torch.float32, device=logits.device)
-        soup_ce_fwd_kernel[(rows,)](logits, labels, lse, loss, logits.stride(0), V,
-                                    IGNORE=ignore_index, BLOCK=_BLOCK, num_warps=8)
+        with timed(("ce_fwd", str(logits.dtype))):
+            soup_ce_fwd_kernel[(rows,)](logits, labels, lse, loss, logits.stride(0), V,
+                                        IGNORE=ignore_index, BLOCK=_BLOCK, num_warps=8)
         ctx.save_for_backward(logits, labels, lse)
         ctx.ignore_index = ignore_index
         ctx.inplace = bool(inplace)
@@ -103,9 +104,10 @@ class _CERows(torch.autograd.Function):
         gout = gout.to(torch.float32).contiguous()
         # inplace: градиент пишется поверх logits (экономит буфер размером с logits)
         dx = logits if (ctx.inplace and logits.is_contiguous()) else torch.empty_like(logits)
-        soup_ce_bwd_kernel[(rows,)](logits, labels, lse, gout, dx, logits.stride(0),
-                                    dx.stride(0), V, IGNORE=ctx.ignore_index,
-                                    BLOCK=_BLOCK, num_warps=8)
+        with timed(("ce_bwd", str(logits.dtype))):
+            soup_ce_bwd_kernel[(rows,)](logits, labels, lse, gout, dx, logits.stride(0),
+                                        dx.stride(0), V, IGNORE=ctx.ignore_index,
+                                        BLOCK=_BLOCK, num_warps=8)
         return dx, None, None, None
 
 
@@ -123,7 +125,8 @@ def fused_entropy(logits):
     if x.stride(-1) != 1:
         x = x.contiguous()
     out = torch.empty(x.shape[0], dtype=torch.float32, device=x.device)
-    soup_entropy_kernel[(x.shape[0],)](x, out, x.stride(0), V, BLOCK=_BLOCK, num_warps=8)
+    with timed(("entropy", str(x.dtype))):
+        soup_entropy_kernel[(x.shape[0],)](x, out, x.stride(0), V, BLOCK=_BLOCK, num_warps=8)
     return out.view(logits.shape[:-1])
 
 

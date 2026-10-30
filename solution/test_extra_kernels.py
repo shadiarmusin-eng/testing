@@ -146,3 +146,46 @@ def test_fast_mlp_on_bnb_linear4bit():
     out.float().backward(dy)
     torch.testing.assert_close(out.float(), ref, rtol=2e-2, atol=2e-2)
     torch.testing.assert_close(x.grad, ref_dx, rtol=5e-2, atol=5e-2)
+
+
+def _rope_inputs(qdt, B=2, S=37, H=12, Hk=2, D=128):
+    torch.manual_seed(0)
+    qb = torch.randn(B, S, H, D, device="cuda", dtype=qdt)
+    kb = torch.randn(B, S, Hk, D, device="cuda", dtype=qdt)
+    freqs = torch.randn(B, S, D // 2, device="cuda")
+    emb = torch.cat([freqs, freqs], dim=-1)
+    return qb, kb, emb.cos(), emb.sin()
+
+
+@cuda
+@pytest.mark.parametrize("qdt", [torch.float16, torch.float32])
+def test_rotary_matches_hf(qdt):
+    import transformers.models.qwen2.modeling_qwen2 as m
+    from solution.rotary import patch_qwen2_rotary
+    patch_qwen2_rotary()
+    ref_fn = getattr(m.apply_rotary_pos_emb, "_soup_orig", m.apply_rotary_pos_emb)
+    qb, kb, cos, sin = _rope_inputs(qdt)
+    q1, k1 = qb.clone().requires_grad_(), kb.clone().requires_grad_()
+    q2, k2 = qb.clone().requires_grad_(), kb.clone().requires_grad_()
+    qo, ko = m.apply_rotary_pos_emb(q1.transpose(1, 2), k1.transpose(1, 2), cos, sin)
+    qr, kr = ref_fn(q2.transpose(1, 2), k2.transpose(1, 2), cos, sin)
+    assert qo.dtype == qr.dtype and ko.dtype == kr.dtype
+    torch.testing.assert_close(qo.float(), qr.float(), rtol=2e-3, atol=2e-3)
+    torch.testing.assert_close(ko.float(), kr.float(), rtol=2e-3, atol=2e-3)
+    dq, dk = torch.randn_like(qr), torch.randn_like(kr)
+    torch.autograd.backward([qo, ko], [dq, dk])
+    torch.autograd.backward([qr, kr], [dq, dk])
+    tol = 5e-3 if qdt == torch.float16 else 1e-4
+    torch.testing.assert_close(q1.grad.float(), q2.grad.float(), rtol=tol, atol=tol)
+    torch.testing.assert_close(k1.grad.float(), k2.grad.float(), rtol=tol, atol=tol)
+
+
+@cuda
+def test_rotary_gives_fp16_inside_autocast():
+    import transformers.models.qwen2.modeling_qwen2 as m
+    from solution.rotary import patch_qwen2_rotary
+    patch_qwen2_rotary()
+    qb, kb, cos, sin = _rope_inputs(torch.float16)
+    with torch.autocast("cuda", dtype=torch.float16):
+        qo, ko = m.apply_rotary_pos_emb(qb.transpose(1, 2), kb.transpose(1, 2), cos, sin)
+    assert qo.dtype == torch.float16 and ko.dtype == torch.float16

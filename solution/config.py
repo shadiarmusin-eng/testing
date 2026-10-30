@@ -8,6 +8,7 @@ NF4, CE_INPLACE_GRAD.
 
 ENABLE_RMSNORM = True            # наш Triton RMSNorm вместо 5 eager-операций transformers
 ENABLE_RMSNORM_FP16_OUT = True   # нормы слоёв отдают fp16 сразу (меньше кастов и памяти)
+ENABLE_ROTARY = True             # fused RoPE для q и k (rotary.py)
 ENABLE_MLP_FAST = True           # MLP целиком в fp16 + fused SwiGLU (mlp.py)
 ENABLE_CE = True                 # fused cross-entropy по словарю 152k (fused_ce.py)
 ENABLE_ENTROPY = True            # fused entropy (TRL считает её каждый шаг)
