@@ -11,10 +11,32 @@ The rules in short (the README and the task statement have the full ones):
 - no ready-made kernel libraries (unsloth, liger-kernel, xformers, flash-attn, torchao, ...);
 - the task stays the same: model, data, batches and their order, steps, LoRA, optimizer, Soup's
   settings and outputs; no other GPU, no background processes, no tricks with the measurement.
+
+Our kernels (файлы решения):
+- rmsnorm.py  — fused RMSNorm (soup_rmsnorm_fwd_kernel / soup_rmsnorm_bwd_kernel), включён;
+- nf4.py      — Triton NF4 dequant (soup_nf4_dequant_kernel), флаг ENABLE_NF4;
+- fused_ce.py — fused cross-entropy+entropy (soup_ce_fwd_kernel), флаги ENABLE_CE, ENABLE_ENTROPY;
+- mlp.py      — быстрый fp16 путь Qwen2MLP поверх swiglu-примера, флаг ENABLE_MLP_FAST;
+- config.py   — все флаги; _util.py — счётчики вызовов и логи [solution];
+- _extra_patches.py — apply_extra(): диагностика dtype + установка всех патчей.
 """
 
 from .swiglu import patch_qwen2_mlp
 
 
 def apply():
-    patch_qwen2_mlp()  # the example: works out of the box, does not count as your own kernel
+    """Точка входа харнеса: сначала пример (он работает из коробки), затем наши патчи.
+
+    Каждый шаг в своём try/except: любая ошибка патча не должна ронять обучение — просто
+    остаётся базовое поведение и печатается [solution] SKIPPED/ошибка.
+    """
+    try:
+        patch_qwen2_mlp()  # пример: fused SwiGLU, не считается нашим кернелом
+    except Exception as exc:  # noqa: BLE001
+        print(f"[solution] WARN: example swiglu patch failed ({exc!r})", flush=True)
+    try:
+        from ._extra_patches import apply_extra
+        apply_extra()
+    except Exception as exc:  # noqa: BLE001
+        print(f"[solution] ERROR: apply_extra failed ({exc!r}); training continues unpatched",
+              flush=True)
