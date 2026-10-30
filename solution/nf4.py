@@ -140,6 +140,7 @@ def patch_bnb_dequant():
         return orig(A, *args, **kwargs)
 
     dequantize_4bit._soup_fused = True
+    dequantize_4bit._soup_orig = orig
     BF.dequantize_4bit = dequantize_4bit
     for name, mod in list(sys.modules.items()):
         if name.startswith("bitsandbytes") and getattr(mod, "dequantize_4bit", None) is orig:
