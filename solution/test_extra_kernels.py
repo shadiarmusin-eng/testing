@@ -103,9 +103,10 @@ def test_nf4_patch_matches_bnb(nested):
     from solution.nf4 import patch_bnb_dequant
     torch.manual_seed(0)
     BF, q, st = _quantize(nested, shape=(256, 1536))
-    orig = BF.dequantize_4bit
-    patch_bnb_dequant()
-    assert BF.dequantize_4bit is not orig
+    patch_bnb_dequant()                      # повторный вызов безопасен (идемпотентен)
+    patched = BF.dequantize_4bit
+    assert getattr(patched, "_soup_fused", False), "патч не установился"
+    orig = patched._soup_orig                # настоящий оригинал bnb
     for A in (q, q.t()):              # q.t() имеет форму (1, n/2): так вызывает MatMul4Bit
         ref = orig(A, st)
         out = BF.dequantize_4bit(A, st)
